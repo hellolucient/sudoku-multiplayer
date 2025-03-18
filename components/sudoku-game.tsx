@@ -7,6 +7,18 @@ import SudokuBoard from "./sudoku-board"
 import PlayerHand from "./player-hand"
 import { generateSudokuPuzzle } from "@/lib/sudoku-generator"
 import { checkValidPlacement, isRowComplete, isColumnComplete, isBoxComplete } from "@/lib/sudoku-validator"
+import { cn } from "@/lib/utils"
+import SoundToggle from "@/components/sound-toggle"
+import { 
+  playPlaceSound, 
+  playErrorSound, 
+  playCompleteSound, 
+  playSelectSound,
+  playWinSound,
+  playLoseSound,
+  playComputerMoveSound
+} from "@/lib/sound-effects"
+import ScorePopup from "./score-popup"
 
 type Player = {
   name: string
@@ -45,6 +57,8 @@ export default function SudokuGame() {
   const [invalidCell, setInvalidCell] = useState<[number, number, number] | null>(null)
   const [computerSelectedCell, setComputerSelectedCell] = useState<[number, number] | null>(null)
   const [completedSections, setCompletedSections] = useState<CompletedSection[]>([])
+  const [scorePopups, setScorePopups] = useState<Array<{ id: number; score: number; position: { x: number; y: number } }>>([])
+  const [nextPopupId, setNextPopupId] = useState(0)
 
   // Initialize or reset the game
   const startNewGame = () => {
@@ -116,6 +130,7 @@ export default function SudokuGame() {
     if (!gameState || gameState.gameOver || gameState.currentPlayer !== 0) return
     if (gameState.board[row][col] !== null) return
 
+    playSelectSound()
     setSelectedCell([row, col])
   }
 
@@ -143,6 +158,7 @@ export default function SudokuGame() {
     const updatedPlayers = [...gameState.players]
 
     if (isValid) {
+      playPlaceSound()
       // Update the board permanently for valid moves
       newBoard[row][col] = number
 
@@ -151,6 +167,7 @@ export default function SudokuGame() {
 
       // Check row completion
       if (isRowComplete(newBoard, row)) {
+        playCompleteSound()
         scoreChange += 25
         message += " Row complete! +25 bonus points."
         newCompletedSections.push({ type: "row", index: row })
@@ -158,6 +175,7 @@ export default function SudokuGame() {
 
       // Check column completion
       if (isColumnComplete(newBoard, col)) {
+        playCompleteSound()
         scoreChange += 25
         message += " Column complete! +25 bonus points."
         newCompletedSections.push({ type: "column", index: col })
@@ -167,6 +185,7 @@ export default function SudokuGame() {
       const boxRow = Math.floor(row / 3)
       const boxCol = Math.floor(col / 3)
       if (isBoxComplete(newBoard, boxRow, boxCol)) {
+        playCompleteSound()
         scoreChange += 50
         message += " Box complete! +50 bonus points."
         newCompletedSections.push({ type: "box", index: boxRow * 3 + boxCol, boxRow, boxCol })
@@ -181,7 +200,44 @@ export default function SudokuGame() {
           setCompletedSections([])
         }, 1800) // 3 flashes at 600ms each
       }
+
+      // Update player's score and hand
+      updatedPlayers[0] = {
+        ...updatedPlayers[0],
+        score: updatedPlayers[0].score + scoreChange,
+        hand: updatedPlayerHand,
+      }
+
+      // Draw a new tile if possible
+      if (newPool.length > 0) {
+        const newTile = newPool.pop()
+        updatedPlayers[0].hand.push(newTile!)
+        message += " Drew a new tile."
+      }
+
+      // Check if game should end
+      const gameOver = shouldGameEnd(newBoard, updatedPlayers[0].hand, updatedPlayers[1].hand, newPool)
+
+      setGameState({
+        ...gameState,
+        board: newBoard,
+        players: updatedPlayers,
+        pool: newPool,
+        currentPlayer: 1, // Switch to computer's turn
+        message,
+        gameOver,
+      })
+
+      setSelectedCell(null)
+
+      // If game is over, show winner
+      if (gameOver) {
+        endGame(updatedPlayers)
+      }
+
+      showScorePopup(scoreChange, selectedCell)
     } else {
+      playErrorSound()
       // For invalid moves, we'll show the number temporarily for animation
       // but it won't be permanently added to the board
       setInvalidCell([row, col, number])
@@ -204,20 +260,6 @@ export default function SudokuGame() {
       }, 1500)
     }
 
-    // Update player's score and hand
-    updatedPlayers[0] = {
-      ...updatedPlayers[0],
-      score: updatedPlayers[0].score + scoreChange,
-      hand: updatedPlayerHand,
-    }
-
-    // Draw a new tile if possible
-    if (newPool.length > 0) {
-      const newTile = newPool.pop()
-      updatedPlayers[0].hand.push(newTile!)
-      message += " Drew a new tile."
-    }
-
     // Check if game should end
     const gameOver = shouldGameEnd(newBoard, updatedPlayers[0].hand, updatedPlayers[1].hand, newPool)
 
@@ -227,8 +269,8 @@ export default function SudokuGame() {
       players: updatedPlayers,
       pool: newPool,
       currentPlayer: 1, // Switch to computer's turn
-      message,
       gameOver,
+      message: gameOver ? determineWinner(updatedPlayers) : message + " Your turn!",
     })
 
     setSelectedCell(null)
@@ -330,6 +372,7 @@ export default function SudokuGame() {
       }
 
       if (isValid) {
+        playComputerMoveSound()
         // Update the board permanently for valid moves
         newBoard[move.row][move.col] = move.number
 
@@ -338,6 +381,7 @@ export default function SudokuGame() {
 
         // Check row completion
         if (isRowComplete(newBoard, move.row)) {
+          playCompleteSound()
           scoreChange += 25
           message += " Row complete! +25 bonus points."
           newCompletedSections.push({ type: "row", index: move.row })
@@ -345,6 +389,7 @@ export default function SudokuGame() {
 
         // Check column completion
         if (isColumnComplete(newBoard, move.col)) {
+          playCompleteSound()
           scoreChange += 25
           message += " Column complete! +25 bonus points."
           newCompletedSections.push({ type: "column", index: move.col })
@@ -354,6 +399,7 @@ export default function SudokuGame() {
         const boxRow = Math.floor(move.row / 3)
         const boxCol = Math.floor(move.col / 3)
         if (isBoxComplete(newBoard, boxRow, boxCol)) {
+          playCompleteSound()
           scoreChange += 50
           message += " Box complete! +50 bonus points."
           newCompletedSections.push({ type: "box", index: boxRow * 3 + boxCol, boxRow, boxCol })
@@ -372,6 +418,7 @@ export default function SudokuGame() {
         // Update computer's score with bonuses
         updatedPlayers[1].score = updatedPlayers[1].score + scoreChange - move.number // We already added the tile value
       } else {
+        playErrorSound()
         // For invalid moves, show animation but don't update board
         setInvalidCell([move.row, move.col, move.number])
 
@@ -419,6 +466,8 @@ export default function SudokuGame() {
       if (gameOver) {
         endGame(updatedPlayers)
       }
+
+      showScorePopup(scoreChange, [move.row, move.col])
     }, 1000)
   }
 
@@ -452,8 +501,22 @@ export default function SudokuGame() {
 
   // End the game and determine the winner
   const endGame = (players: Player[]) => {
-    const winnerMessage = determineWinner(players)
-    setGameState((prev) => (prev ? { ...prev, gameOver: true, message: winnerMessage } : null))
+    const player1Score = players[0].score
+    const player2Score = players[1].score
+
+    let message = ""
+
+    if (player1Score > player2Score) {
+      playWinSound()
+      message = `You win! Final score: ${player1Score} to ${player2Score}.`
+    } else if (player1Score < player2Score) {
+      playLoseSound()
+      message = `Computer wins! Final score: ${player2Score} to ${player1Score}.`
+    } else {
+      message = `It's a tie! Final score: ${player1Score} each.`
+    }
+    
+    setGameState((prev) => (prev ? { ...prev, gameOver: true, message: message } : null))
   }
 
   // Determine the winner
@@ -467,18 +530,43 @@ export default function SudokuGame() {
     }
   }
 
+  const showScorePopup = (score: number, cellCoords?: [number, number]) => {
+    // Default position in the center of the board
+    let position = { x: window.innerWidth / 2, y: window.innerHeight / 2 }
+
+    // If cell coordinates are provided, use a position relative to the screen
+    if (cellCoords) {
+      position = { 
+        x: window.innerWidth / 2, 
+        y: window.innerHeight / 2 - 50 
+      }
+    }
+
+    // Add new popup
+    const newPopup = {
+      id: nextPopupId,
+      score,
+      position
+    }
+    
+    setScorePopups(prev => [...prev, newPopup])
+    setNextPopupId(prev => prev + 1)
+  }
+
   return (
-    <div className="flex flex-col gap-2 md:gap-4">
+    <div className="flex flex-col w-full">
       {!gameState ? (
-        <div className="flex flex-col gap-3 p-4 md:p-6 border rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50 shadow-md">
-          <h2 className="text-lg md:text-xl font-semibold text-indigo-800">Game Settings</h2>
+        <div className="flex flex-col gap-4 my-6">
           <div className="flex flex-col gap-2">
-            <label htmlFor="difficulty" className="text-sm font-medium text-indigo-700">
-              Difficulty
+            <label htmlFor="difficulty" className="text-sm font-medium text-muted-foreground">
+              Difficulty Level
             </label>
-            <Select value={difficulty} onValueChange={(value) => setDifficulty(value as "easy" | "medium" | "hard")}>
-              <SelectTrigger id="difficulty" className="bg-white">
-                <SelectValue placeholder="Select difficulty" />
+            <Select
+              value={difficulty}
+              onValueChange={(value: "easy" | "medium" | "hard") => setDifficulty(value)}
+            >
+              <SelectTrigger id="difficulty" className="w-full bg-white">
+                <SelectValue placeholder="Select Difficulty" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="easy">Easy</SelectItem>
@@ -487,55 +575,85 @@ export default function SudokuGame() {
               </SelectContent>
             </Select>
           </div>
-          <Button onClick={startNewGame} className="bg-indigo-600 hover:bg-indigo-700">
-            Start Game
+          <Button onClick={startNewGame} className="w-full font-medium">
+            Start New Game
           </Button>
         </div>
       ) : (
         <>
-          <div className="flex justify-between items-center mb-1 md:mb-4 p-2 md:p-3 bg-gradient-to-r from-indigo-600 to-blue-500 text-white rounded-lg shadow-md">
-            <div className="text-base md:text-lg font-semibold">
-              {gameState.players[0].name}: {gameState.players[0].score}
+          {/* Game board */}
+          <div className="mb-2">
+            <div className="flex justify-between items-center mb-3">
+              <div className="flex flex-col">
+                <span className="text-sm font-medium text-muted-foreground">Difficulty</span>
+                <span className="font-medium capitalize">{difficulty}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <SoundToggle />
+                <Button onClick={startNewGame} className="bg-white border border-gray-200 text-sm">
+                  New Game
+                </Button>
+              </div>
             </div>
-            <div className="text-base md:text-lg font-semibold">
-              {gameState.players[1].name}: {gameState.players[1].score}
-            </div>
-          </div>
-
-          <div className="p-2 md:p-3 bg-indigo-50 rounded-md mb-2 md:mb-4 border-l-4 border-indigo-500 shadow-sm">
-            <p className="text-xs md:text-sm text-indigo-800">{gameState.message}</p>
-          </div>
-
-          <SudokuBoard
-            board={gameState.board}
-            onCellSelect={handleCellSelect}
-            selectedCell={selectedCell}
-            invalidCell={invalidCell}
-            computerSelectedCell={computerSelectedCell}
-            completedSections={completedSections}
-            currentPlayer={gameState.currentPlayer}
-            gameOver={gameState.gameOver}
-          />
-
-          <div className="mt-3 md:mt-6">
-            <h3 className="text-sm md:text-md font-semibold mb-1 md:mb-3 text-indigo-700">Your Hand</h3>
-            <PlayerHand
-              tiles={gameState.players[0].hand}
-              onTileSelect={handleTileSelect}
-              disabled={gameState.currentPlayer !== 0 || !selectedCell || gameState.gameOver}
+            <SudokuBoard
+              board={gameState.board}
+              onCellSelect={handleCellSelect}
+              selectedCell={selectedCell}
+              invalidCell={invalidCell}
+              computerSelectedCell={computerSelectedCell}
+              completedSections={completedSections}
+              currentPlayer={gameState.currentPlayer}
+              gameOver={gameState.gameOver}
             />
           </div>
 
-          <div className="mt-2 md:mt-4 flex justify-between text-xs md:text-sm text-indigo-600">
-            <div>Pool: {gameState.pool.length} tiles</div>
-            <div>Computer: {gameState.players[1].hand.length} tiles</div>
+          {/* Player hands */}
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            {gameState.players.map((player, index) => (
+              <div
+                key={index}
+                className={cn(
+                  "flex flex-col items-center p-3 rounded-lg",
+                  gameState.currentPlayer === index ? "bg-primary/5 border-primary border" : "bg-gray-50 border-gray-200 border"
+                )}
+              >
+                <div className="text-sm font-medium mb-1 flex items-center gap-1">
+                  <span>{player.name}</span>
+                  {gameState.currentPlayer === index && !gameState.gameOver && (
+                    <span className="inline-block w-2 h-2 rounded-full bg-primary animate-pulse"></span>
+                  )}
+                </div>
+                <div className="text-lg font-bold text-primary">{player.score}</div>
+              </div>
+            ))}
           </div>
 
-          {gameState.gameOver && (
-            <Button onClick={startNewGame} className="mt-4 md:mt-6 bg-indigo-600 hover:bg-indigo-700">
-              Play Again
-            </Button>
-          )}
+          {/* Game message */}
+          <div className="game-message">
+            <p>{gameState.message}</p>
+          </div>
+
+          {/* Current player's hand */}
+          <div className="mt-4">
+            <h3 className="text-sm font-medium text-center mb-2">Your Tiles</h3>
+            <PlayerHand
+              tiles={gameState.players[0].hand}
+              onTileSelect={handleTileSelect}
+              disabled={gameState.currentPlayer !== 0 || gameState.gameOver}
+            />
+          </div>
+
+          {/* Score popups */}
+          {scorePopups.map(popup => (
+            <ScorePopup
+              key={popup.id}
+              score={popup.score}
+              position={popup.position}
+              onComplete={() => {
+                setScorePopups(prev => prev.filter(p => p.id !== popup.id))
+              }}
+            />
+          ))}
         </>
       )}
     </div>
